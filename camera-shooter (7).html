@@ -1,0 +1,854 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#000000">
+<title>Camera Shooter</title>
+<style>
+  :root {
+    --ink: #ffffff;
+    --accent: #ff3b30;
+    --glass: rgba(255, 255, 255, 0.14);
+    --glass-edge: rgba(255, 255, 255, 0.7);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #000; color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    overscroll-behavior: none; touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+
+  /* Camera feed fills the screen */
+  #cam {
+    position: fixed; inset: 0; width: 100%; height: 100%;
+    object-fit: cover; background: #000;
+  }
+
+  /* Crosshair at the exact center */
+  #crosshair {
+    position: fixed; left: 50%; top: 50%;
+    width: 84px; height: 84px; margin: -42px 0 0 -42px;
+    pointer-events: none; display: none;
+    color: #ff3b30;
+    filter: drop-shadow(0 0 2px rgba(0,0,0,.8));
+  }
+  body.live #crosshair { display: block; }
+  #crosshair.kick { animation: kick .12s ease-out; }
+  @keyframes kick { 0% { transform: scale(1.25); } 100% { transform: scale(1); } }
+
+  /* Transparent shoot button, right side of the screen */
+  #shoot {
+    position: fixed; top: 50%; transform: translateY(-50%);
+    right: max(24px, env(safe-area-inset-right, 0px));
+    width: 92px; height: 92px; border-radius: 50%;
+    background: var(--glass); border: 2px solid var(--glass-edge);
+    color: var(--ink); display: none; place-items: center; padding: 0;
+    cursor: pointer; outline: none;
+    transition: transform .06s ease-out, background .06s;
+  }
+  body.live #shoot { display: grid; }
+  #shoot::after {
+    content: ""; width: 30px; height: 30px; border-radius: 50%;
+    background: rgba(255, 59, 48, 0.55); border: 2px solid rgba(255,255,255,.8);
+  }
+  #shoot:active, #shoot.down { transform: translateY(-50%) scale(.92); background: rgba(255,255,255,.28); }
+  #shoot:focus-visible { box-shadow: 0 0 0 3px #fff; }
+
+  /* Shots counter */
+  #hud {
+    position: fixed; top: max(14px, env(safe-area-inset-top, 0px));
+    left: max(16px, env(safe-area-inset-left, 0px));
+    font-size: 13px; letter-spacing: .08em; text-transform: uppercase;
+    font-variant-numeric: tabular-nums;
+    padding: 6px 10px; border-radius: 6px; background: rgba(0,0,0,.35); display: none;
+  }
+  body.live #hud { display: block; }
+
+  /* Start / error screen */
+  #gate {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 16px; text-align: center;
+    padding: 24px max(24px, env(safe-area-inset-right, 0px)) 24px max(24px, env(safe-area-inset-left, 0px));
+    background: #0b0d10;
+  }
+  body.live #gate { display: none; }
+  #gate h1 { margin: 0; font-size: 28px; letter-spacing: .02em; }
+  #gate p { margin: 0; max-width: 34ch; line-height: 1.5; color: #aab2bd; }
+  #gate p.err { color: #ff8a80; }
+  #start {
+    font: inherit; font-weight: 600; font-size: 17px; color: #fff;
+    background: var(--accent); border: 0; border-radius: 999px; padding: 14px 28px; cursor: pointer;
+  }
+  #start:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+
+  /* Effects (created by script) */
+  .bullet {
+    position: fixed; left: 0; top: 0; width: 10px; height: 10px; margin: -5px 0 0 -5px;
+    border-radius: 50%; pointer-events: none;
+    background: radial-gradient(circle, #fff 0%, #ffd27a 45%, rgba(255,120,0,0) 75%);
+    box-shadow: 0 0 12px 4px rgba(255, 190, 80, .8);
+  }
+  .flash {
+    position: fixed; width: 70px; height: 70px; margin: -35px 0 0 -35px; border-radius: 50%;
+    pointer-events: none;
+    background: radial-gradient(circle, rgba(255,255,255,.95), rgba(255,170,60,.6) 40%, rgba(255,100,0,0) 70%);
+  }
+  .hole {
+    position: fixed; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%;
+    pointer-events: none;
+    background: radial-gradient(circle, #000 0 35%, rgba(40,25,15,.85) 55%, rgba(0,0,0,0) 72%);
+  }
+
+  /* Aliens */
+  #crosshair, #hud, #shoot { z-index: 5; }
+  .alien {
+    position: fixed; left: 0; top: 0; width: 72px; height: 72px;
+    pointer-events: none; z-index: 1; will-change: transform;
+    filter: drop-shadow(0 0 10px rgba(120, 255, 120, .55));
+  }
+  .alien svg { width: 100%; height: 100%; display: block; animation: pop .35s cubic-bezier(.3,1.6,.5,1); }
+  @keyframes pop { from { transform: scale(0); } to { transform: scale(1); } }
+  .arrow {
+    position: fixed; left: 0; top: 0; width: 26px; height: 26px; margin: -13px 0 0 -13px;
+    pointer-events: none; z-index: 4;
+    background: linear-gradient(90deg, #7dff5e, #d6ff7a);
+    clip-path: polygon(0 0, 100% 50%, 0 100%, 22% 50%);
+  }
+  #crosshair { transition: scale .12s ease-out; }
+  #crosshair.onTarget { scale: .8; }
+  body:not(.live) .trail { display: none; }
+  .trail {
+    position: fixed; left: 0; top: 0; width: 8px; height: 8px; border-radius: 50%;
+    pointer-events: none; z-index: 4; opacity: 0;
+    background: rgba(255, 140, 70, .85); box-shadow: 0 0 10px 2px rgba(255, 110, 40, .6);
+  }
+  .lockring {
+    position: absolute; left: -20px; top: -20px; width: 112px; height: 112px; border-radius: 50%;
+    --p: 0; opacity: 0; pointer-events: none;
+    background: conic-gradient(#7dff5e calc(var(--p) * 360deg), rgba(125, 255, 94, .15) 0);
+    -webkit-mask: radial-gradient(circle, transparent 60%, #000 62%);
+    mask: radial-gradient(circle, transparent 60%, #000 62%);
+  }
+  .alien.locked .lockring { animation: lockpulse .3s ease-in-out infinite alternate; }
+  @keyframes lockpulse { from { scale: 1; } to { scale: 1.14; } }
+  .pop {
+    position: fixed; z-index: 6; pointer-events: none; white-space: nowrap;
+    font-weight: 800; font-size: 20px; letter-spacing: .04em; color: #d6ff7a;
+    text-shadow: 0 0 8px rgba(80, 220, 60, .9), 0 2px 2px rgba(0,0,0,.7);
+  }
+  #hint {
+    position: fixed; left: 50%; bottom: max(24px, env(safe-area-inset-bottom, 0px));
+    transform: translateX(-50%); z-index: 5; pointer-events: none;
+    padding: 8px 14px; border-radius: 999px; background: rgba(0,0,0,.5);
+    font-size: 14px; white-space: nowrap; opacity: 0; transition: opacity .4s;
+  }
+  #hint.show { opacity: 1; }
+  .goo {
+    position: fixed; border-radius: 50%; pointer-events: none; z-index: 2;
+    background: radial-gradient(circle at 35% 35%, #c8ff9a, #5fd23a 60%, #2f8a1e);
+    box-shadow: 0 0 8px rgba(120, 255, 90, .8);
+  }
+  .goo-ring {
+    position: fixed; width: 80px; height: 80px; margin: -40px 0 0 -40px; border-radius: 50%;
+    pointer-events: none; z-index: 2;
+    border: 4px solid rgba(160, 255, 110, .95);
+    box-shadow: 0 0 22px 8px rgba(110, 255, 80, .55), inset 0 0 18px 6px rgba(160, 255, 110, .4);
+  }
+
+  /* Heat effects around the crosshair */
+  .ring {
+    position: fixed; width: 60px; height: 60px; margin: -30px 0 0 -30px; border-radius: 50%;
+    pointer-events: none; border: 3px solid rgba(255, 150, 40, .9);
+    box-shadow: 0 0 18px 6px rgba(255, 110, 20, .55), inset 0 0 14px 4px rgba(255, 170, 60, .45);
+  }
+  .glow {
+    position: fixed; width: 150px; height: 150px; margin: -75px 0 0 -75px; border-radius: 50%;
+    pointer-events: none;
+    background: radial-gradient(circle, rgba(255, 140, 30, .55), rgba(255, 70, 0, .25) 45%, rgba(255, 60, 0, 0) 70%);
+    mix-blend-mode: screen;
+  }
+  .spark {
+    position: fixed; width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%;
+    pointer-events: none; background: #ffd27a; box-shadow: 0 0 8px 2px rgba(255, 140, 20, .9);
+  }
+  .smoke {
+    position: fixed; width: 40px; height: 40px; margin: -20px 0 0 -20px; border-radius: 50%;
+    pointer-events: none; filter: blur(9px);
+    background: radial-gradient(circle, rgba(200, 200, 200, .55), rgba(120, 120, 120, 0) 70%);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #crosshair.kick { animation: none; }
+  }
+</style>
+</head>
+<body>
+
+<video id="cam" autoplay playsinline muted></video>
+
+<!-- Crosshair -->
+<svg id="crosshair" viewBox="0 0 84 84" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+  <circle cx="42" cy="42" r="22"/>
+  <line x1="42" y1="4"  x2="42" y2="30"/>
+  <line x1="42" y1="54" x2="42" y2="80"/>
+  <line x1="4"  y1="42" x2="30" y2="42"/>
+  <line x1="54" y1="42" x2="80" y2="42"/>
+  <circle cx="42" cy="42" r="1.8" fill="currentColor" stroke="none"/>
+</svg>
+
+<div id="hud">Shots <span id="count">0</span> &nbsp;·&nbsp; Aliens <span id="kills">0</span> &nbsp;·&nbsp; Score <span id="score">0</span></div>
+
+<div id="hint"></div>
+
+<button id="shoot" type="button" aria-label="Shoot"></button>
+
+<div id="gate">
+  <h1>Camera Shooter</h1>
+  <p id="msg">Point your camera, line up the crosshair, and tap the button on the right to shoot.</p>
+  <button id="start" type="button">Start camera</button>
+</div>
+
+<script>
+(() => {
+  const cam = document.getElementById('cam');
+  const gate = document.getElementById('gate');
+  const msg = document.getElementById('msg');
+  const startBtn = document.getElementById('start');
+  const shootBtn = document.getElementById('shoot');
+  const cross = document.getElementById('crosshair');
+  const countEl = document.getElementById('count');
+
+  let shots = 0;
+  let stream = null;
+  let audioCtx = null;
+  let holdTimer = null;
+
+  /* ---------- Camera ---------- */
+  async function startCamera() {
+    let embedded = false;
+    try { embedded = window.top !== window.self; } catch (e) { embedded = true; }
+    if (embedded) {
+      showError('The camera is blocked inside this preview. Open the file or link directly in Chrome (Android) or Safari (iPhone).');
+      return;
+    }
+    if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showError('The camera only works on an https:// link. Host this file (Netlify Drop or GitHub Pages) and open that link in Chrome or Safari. Opening the file from your phone storage will not work.');
+      return;
+    }
+    await requestMotion();   // lets the phone's motion sensor steer the view (iPhone asks permission here)
+    try {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+          audio: false
+        });
+      } catch (e) {
+        // Fall back to any camera (e.g. laptop webcam)
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      }
+      cam.srcObject = stream;
+      await cam.play().catch(() => {});
+      document.body.classList.add('live');
+      ensureAudio();
+      startAliens();
+    } catch (err) {
+      const name = err && err.name;
+      if (name === 'NotAllowedError') showError('Camera permission was denied. Tap the lock icon in the address bar, set Camera to Allow, reload, and try again. If you opened this inside another app (WhatsApp, Instagram, a file viewer), open it in Chrome or Safari instead.');
+      else if (name === 'NotFoundError') showError('No camera was found on this device.');
+      else if (name === 'NotReadableError') showError('The camera is in use by another app. Close it and try again.');
+      else showError('Could not start the camera: ' + (err && err.message ? err.message : err));
+    }
+  }
+
+  function showError(text) {
+    msg.textContent = text;
+    msg.classList.add('err');
+    startBtn.textContent = 'Try again';
+  }
+
+  startBtn.addEventListener('click', startCamera);
+
+  /* ---------- Sound ---------- */
+  function ensureAudio() {
+    try {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+    } catch (e) { audioCtx = null; }
+  }
+
+  function playShot() {
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+
+    // Noise burst (the "crack")
+    const len = Math.floor(audioCtx.sampleRate * 0.18);
+    const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3);
+    const noise = audioCtx.createBufferSource();
+    noise.buffer = buf;
+    const bp = audioCtx.createBiquadFilter();
+    bp.type = 'bandpass'; bp.frequency.value = 1800; bp.Q.value = 0.7;
+    const ng = audioCtx.createGain();
+    ng.gain.setValueAtTime(0.9, t);
+    ng.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+    noise.connect(bp).connect(ng).connect(audioCtx.destination);
+    noise.start(t);
+
+    // Low thump
+    const osc = audioCtx.createOscillator();
+    const og = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(160, t);
+    osc.frequency.exponentialRampToValueAtTime(40, t + 0.15);
+    og.gain.setValueAtTime(0.8, t);
+    og.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+    osc.connect(og).connect(audioCtx.destination);
+    osc.start(t);
+    osc.stop(t + 0.2);
+  }
+
+  /* ---------- Shooting ---------- */
+  const FLIGHT_MS = 260;
+
+  function fire() {
+    if (!document.body.classList.contains('live')) return;
+
+    ensureAudio();
+    playShot();
+    if (navigator.vibrate) navigator.vibrate(25);
+
+    shots += 1;
+    countEl.textContent = shots;
+
+    // The shot happens only at the gyro cursor: no bullet travels across the screen
+    const tx = cur.x;
+    const ty = cur.y;
+
+    cross.classList.remove('kick');
+    void cross.offsetWidth;
+    cross.classList.add('kick');
+
+    impact(tx, ty);
+    checkHit(tx, ty);
+  }
+
+  /* ---------- Looking around: phone motion (or drag on a laptop) ---------- */
+  const DEG = Math.PI / 180;
+  let sensor = null;                 // {a, b, g} radians once the phone reports its orientation
+  let lookYaw = 0, lookPitch = 0;    // used when there is no motion sensor (drag to look)
+  let dragging = false, dragX = 0, dragY = 0;
+
+  function focalPx() {
+    // About 60 degrees of view across the longer side of the screen
+    return Math.max(window.innerWidth, window.innerHeight) / 1.155;
+  }
+
+  async function requestMotion() {
+    try {
+      const D = window.DeviceOrientationEvent;
+      if (D && typeof D.requestPermission === 'function') {
+        const res = await D.requestPermission();   // iPhone asks here
+        if (res !== 'granted') return;
+      }
+    } catch (e) { return; }
+    window.addEventListener('deviceorientation', e => {
+      if (e.beta === null || e.alpha === null) return;
+      sensor = { a: e.alpha * DEG, b: e.beta * DEG, g: e.gamma * DEG };
+    }, true);
+  }
+
+  /* Camera axes (forward / right / up) expressed in world coordinates (x east, y north, z up) */
+  function cameraBasis() {
+    if (sensor) {
+      const a = sensor.a, b = sensor.b, g = sensor.g;
+      const cA = Math.cos(a), sA = Math.sin(a), cB = Math.cos(b), sB = Math.sin(b),
+            cG = Math.cos(g), sG = Math.sin(g);
+      const xd = [cA * cG - sA * sB * sG, sA * cG + cA * sB * sG, -cB * sG];   // device right
+      const yd = [-sA * cB, cA * cB, sB];                                      // device top
+      const zd = [cA * sG + sA * sB * cG, sA * sG - cA * sB * cG, cB * cG];    // out of the screen
+      const ang = (screen.orientation && typeof screen.orientation.angle === 'number')
+        ? screen.orientation.angle : (window.orientation || 0);
+      const o = ang * DEG, co = Math.cos(o), so = Math.sin(o);
+      return {
+        fw: [-zd[0], -zd[1], -zd[2]],                       // the rear camera looks out the back
+        rt: [xd[0] * co - yd[0] * so, xd[1] * co - yd[1] * so, xd[2] * co - yd[2] * so],
+        up: [xd[0] * so + yd[0] * co, xd[1] * so + yd[1] * co, xd[2] * so + yd[2] * co]
+      };
+    }
+    const cy = Math.cos(lookYaw), sy = Math.sin(lookYaw), cp = Math.cos(lookPitch), sp = Math.sin(lookPitch);
+    return { fw: [sy * cp, cy * cp, sp], rt: [cy, -sy, 0], up: [-sy * sp, -cy * sp, cp] };
+  }
+
+  function dot(p, q) { return p[0] * q[0] + p[1] * q[1] + p[2] * q[2]; }
+
+  // Drag to look around when the device has no motion sensor
+  document.addEventListener('pointerdown', e => {
+    if (sensor || e.target.closest('#shoot') || !document.body.classList.contains('live')) return;
+    dragging = true; dragX = e.clientX; dragY = e.clientY;
+  });
+  document.addEventListener('pointermove', e => {
+    if (!dragging || sensor) return;
+    const F = focalPx();
+    lookYaw -= (e.clientX - dragX) / F;
+    lookPitch = Math.max(-80 * DEG, Math.min(80 * DEG, lookPitch + (e.clientY - dragY) / F));
+    dragX = e.clientX; dragY = e.clientY;
+  });
+  const endDrag = () => { dragging = false; };
+  document.addEventListener('pointerup', endDrag);
+  document.addEventListener('pointercancel', endDrag);
+
+  /* ---------- Aliens (fixed in the world: turn the camera to find them) ---------- */
+  const ALIEN_SIZE = 72;
+  const MAX_ALIENS = 3;
+  const aliens = new Set();
+  const hintEl = document.getElementById('hint');
+  const HIT_R = ALIEN_SIZE * 0.55 + 8;
+  let kills = 0;
+  let score = 0;
+  let frameRaf = null;
+  let spawnTimer = null;
+  let lastFrame = 0;
+
+  /* The gyro cursor: it swings the way you turn the phone, then drifts back to the middle when you hold still */
+  const CURSOR_GAIN = 1.2;      // how far the cursor swings for a given turn of the phone
+  const CURSOR_RETURN = 1.5;     // seconds the cursor takes to drift back to the centre
+  const anchor = { yaw: 0, pitch: 0, ready: false };
+  const cur = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+  const trail = [];
+  const trailDots = [];
+  for (let i = 0; i < 6; i++) {
+    const t = document.createElement('div');
+    t.className = 'trail';
+    document.body.appendChild(t);
+    trailDots.push(t);
+  }
+  function wrapAngle(a) {
+    while (a > Math.PI) a -= 2 * Math.PI;
+    while (a < -Math.PI) a += 2 * Math.PI;
+    return a;
+  }
+
+  const ALIEN_SVG = `
+    <svg viewBox="0 0 80 80" aria-hidden="true">
+      <line x1="28" y1="22" x2="20" y2="6" stroke="#2f7d2a" stroke-width="3" stroke-linecap="round"/>
+      <line x1="52" y1="22" x2="60" y2="6" stroke="#2f7d2a" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="19" cy="5" r="4.5" fill="#d6ff7a" stroke="#2f7d2a" stroke-width="2"/>
+      <circle cx="61" cy="5" r="4.5" fill="#d6ff7a" stroke="#2f7d2a" stroke-width="2"/>
+      <ellipse cx="40" cy="44" rx="29" ry="26" fill="#74dc5e" stroke="#2f7d2a" stroke-width="3"/>
+      <ellipse cx="29" cy="42" rx="9" ry="12" fill="#0b160b" transform="rotate(-18 29 42)"/>
+      <ellipse cx="51" cy="42" rx="9" ry="12" fill="#0b160b" transform="rotate(18 51 42)"/>
+      <circle cx="26" cy="38" r="2.6" fill="#fff"/>
+      <circle cx="54" cy="38" r="2.6" fill="#fff"/>
+      <path d="M31 59 Q40 66 49 59" stroke="#1d4d18" stroke-width="3" fill="none" stroke-linecap="round"/>
+    </svg>`;
+
+  function rand(a, b) { return a + Math.random() * (b - a); }
+
+  function spawnAlien(first) {
+    if (aliens.size >= MAX_ALIENS || document.hidden || !document.body.classList.contains('live')) return;
+    const fw = cameraBasis().fw;
+    const camYaw = Math.atan2(fw[0], fw[1]);
+    const camPitch = Math.asin(Math.max(-1, Math.min(1, fw[2])));
+
+    // Random spot in the world. The first one appears in front of you, later ones can be anywhere around.
+    const spread = first ? 20 : 150;
+    const yaw = camYaw + rand(-spread, spread) * DEG;
+    const pitch = Math.max(-50 * DEG, Math.min(60 * DEG, camPitch * 0.5 + rand(-18, 24) * DEG));
+
+    const el = document.createElement('div');
+    el.className = 'alien';
+    el.style.display = 'none';
+    el.innerHTML = ALIEN_SVG + '<div class="lockring"></div>';
+    document.body.appendChild(el);
+
+    const arrow = document.createElement('div');
+    arrow.className = 'arrow';
+    arrow.style.display = 'none';
+    document.body.appendChild(arrow);
+
+    aliens.add({
+      el, arrow, yaw, pitch,
+      t0: performance.now(), life: rand(10000, 15000),
+      phase: Math.random() * Math.PI * 2,
+      x: 0, y: 0, vis: false, lock: 0, ring: el.querySelector('.lockring')
+    });
+  }
+
+  function removeAlien(a) {
+    a.el.remove();
+    a.arrow.remove();
+    aliens.delete(a);
+  }
+
+  function frame(now) {
+    const bs = cameraBasis();
+    const W = window.innerWidth, H = window.innerHeight, F = focalPx();
+    const dt = Math.min(0.05, lastFrame ? (now - lastFrame) / 1000 : 0.016);
+    lastFrame = now;
+
+    // --- Gyro cursor ---
+    // "anchor" is a point in the world that slowly follows where the camera points.
+    // Turn the phone and the anchor appears to slide the other way; the cursor swings
+    // the same way you turn, so you can sweep it onto an alien.
+    const camYaw = Math.atan2(bs.fw[0], bs.fw[1]);
+    const camPitch = Math.asin(Math.max(-1, Math.min(1, bs.fw[2])));
+    if (!anchor.ready) { anchor.yaw = camYaw; anchor.pitch = camPitch; anchor.ready = true; }
+    const follow = 1 - Math.exp(-dt / CURSOR_RETURN);
+    anchor.yaw += wrapAngle(camYaw - anchor.yaw) * follow;
+    anchor.pitch += (camPitch - anchor.pitch) * follow;
+
+    const ad = [Math.sin(anchor.yaw) * Math.cos(anchor.pitch), Math.cos(anchor.yaw) * Math.cos(anchor.pitch), Math.sin(anchor.pitch)];
+    const adepth = dot(ad, bs.fw), asx = dot(ad, bs.rt), asy = dot(ad, bs.up);
+    let offX, offY;
+    if (adepth > 0.05) { offX = (asx / adepth) * F; offY = -(asy / adepth) * F; }
+    else { const l = Math.hypot(asx, asy) || 1; offX = (asx / l) * 10 * F; offY = -(asy / l) * 10 * F; }
+    const maxX = W / 2 - 44, maxY = H / 2 - 44;
+    const tx = Math.max(-maxX, Math.min(maxX, -offX * CURSOR_GAIN));
+    const ty = Math.max(-maxY, Math.min(maxY, -offY * CURSOR_GAIN));
+    const smooth = 1 - Math.exp(-dt / 0.05);
+    cur.x += (W / 2 + tx - cur.x) * smooth;
+    cur.y += (H / 2 + ty - cur.y) * smooth;
+    cross.style.translate = `${cur.x - W / 2}px ${cur.y - H / 2}px`;
+
+    // Short glowing trail behind the cursor
+    trail.push({ x: cur.x, y: cur.y });
+    if (trail.length > 20) trail.shift();
+    trailDots.forEach((dot2, i) => {
+      const p = trail[trail.length - 1 - (i + 1) * 3];
+      if (!p) { dot2.style.opacity = 0; return; }
+      dot2.style.opacity = 0.5 - i * 0.08;
+      dot2.style.transform = `translate(${p.x - 4}px, ${p.y - 4}px) scale(${1 - i * 0.12})`;
+    });
+
+    let anyNear = false;
+
+    aliens.forEach(a => {
+      const age = now - a.t0;
+      if (age > a.life) { removeAlien(a); return; }
+
+      // Gentle hovering in place
+      const yaw = a.yaw + Math.sin(age / 1400 + a.phase) * 0.04;
+      const pitch = a.pitch + Math.cos(age / 1100 + a.phase) * 0.03;
+      const d = [Math.sin(yaw) * Math.cos(pitch), Math.cos(yaw) * Math.cos(pitch), Math.sin(pitch)];
+
+      const depth = dot(d, bs.fw);
+      const sx = dot(d, bs.rt);
+      const sy = dot(d, bs.up);
+
+      let X = 0, Y = 0, onScreen = false;
+      if (depth > 0.05) {
+        X = W / 2 + (sx / depth) * F;
+        Y = H / 2 - (sy / depth) * F;
+        onScreen = X > -ALIEN_SIZE && X < W + ALIEN_SIZE && Y > -ALIEN_SIZE && Y < H + ALIEN_SIZE;
+      }
+      a.x = X; a.y = Y; a.vis = onScreen;
+
+      // Lock-on: keep the cursor on an alien to fill the ring
+      const near = onScreen && Math.hypot(X - cur.x, Y - cur.y) < HIT_R * 1.1;
+      a.lock = near ? Math.min(1, a.lock + dt / 0.5) : Math.max(0, a.lock - dt * 2);
+      if (near) anyNear = true;
+      a.el.style.setProperty('--p', a.lock);
+      a.ring.style.opacity = a.lock > 0.02 ? 1 : 0;
+      a.el.classList.toggle('locked', a.lock >= 1);
+
+      const fade = Math.min(1, (a.life - age) / 800);
+
+      if (onScreen) {
+        a.arrow.style.display = 'none';
+        a.el.style.display = 'block';
+        a.el.style.opacity = fade;
+        a.el.style.transform =
+          `translate(${X - ALIEN_SIZE / 2}px, ${Y - ALIEN_SIZE / 2}px) rotate(${Math.sin(age / 300 + a.phase) * 6}deg)`;
+      } else {
+        // Off screen: show an arrow at the screen edge pointing the way to turn
+        a.el.style.display = 'none';
+        let dx = sx, dy = -sy;
+        const len = Math.hypot(dx, dy) || 1;
+        dx /= len; dy /= len;
+        const t = Math.min((W / 2 - 34) / (Math.abs(dx) || 1e-6), (H / 2 - 34) / (Math.abs(dy) || 1e-6));
+        const ax = W / 2 + dx * t, ay = H / 2 + dy * t;
+        a.arrow.style.display = 'block';
+        a.arrow.style.opacity = fade;
+        a.arrow.style.transform = `translate(${ax}px, ${ay}px) rotate(${Math.atan2(dy, dx)}rad)`;
+      }
+    });
+
+    cross.classList.toggle('onTarget', anyNear);
+    frameRaf = requestAnimationFrame(frame);
+  }
+
+  function startAliens() {
+    clearInterval(spawnTimer);
+    setTimeout(() => spawnAlien(true), 600);
+    spawnTimer = setInterval(() => { if (Math.random() < 0.85) spawnAlien(false); }, 2200);
+    if (!frameRaf) frameRaf = requestAnimationFrame(frame);
+
+    setTimeout(() => {
+      hintEl.textContent = sensor ? 'Turn your phone toward an alien and let the cursor swing onto it' : 'Drag the screen to look around';
+      hintEl.classList.add('show');
+      setTimeout(() => hintEl.classList.remove('show'), 5000);
+    }, 1200);
+  }
+
+  /* Hit test: is an alien under the crosshair when we fire? */
+  function checkHit(cx, cy) {
+    let best = null, bestD = Infinity;
+    aliens.forEach(a => {
+      if (!a.vis) return;
+      const d = Math.hypot(a.x - cx, a.y - cy);
+      if (d < HIT_R && d < bestD) { best = a; bestD = d; }
+    });
+    if (best) killAlien(best);
+  }
+
+  function killAlien(a) {
+    const x = a.x, y = a.y;
+    const perfect = a.lock >= 1;           // shot while fully locked on
+    removeAlien(a);
+    kills += 1;
+    const pts = perfect ? 3 : 1;
+    score += pts;
+    document.getElementById('kills').textContent = kills;
+    document.getElementById('score').textContent = score;
+    if (navigator.vibrate) navigator.vibrate(perfect ? [30, 30, 30, 30, 60] : [30, 40, 30]);
+    playSplat();
+    burst(x, y);
+    if (perfect) burst(x, y);              // bigger explosion for a perfect lock
+    popText(x, y - 30, perfect ? 'PERFECT +3' : '+1');
+  }
+
+  function popText(x, y, text) {
+    const p = document.createElement('div');
+    p.className = 'pop';
+    p.textContent = text;
+    p.style.left = x + 'px';
+    p.style.top = y + 'px';
+    document.body.appendChild(p);
+    p.animate(
+      [{ transform: 'translate(-50%, 0)', opacity: 1 }, { transform: 'translate(-50%, -64px)', opacity: 0 }],
+      { duration: 900, easing: 'ease-out' }
+    ).onfinish = () => p.remove();
+  }
+
+  function burst(x, y) {
+    // Shockwave ring
+    const ring = document.createElement('div');
+    ring.className = 'goo-ring';
+    ring.style.left = x + 'px'; ring.style.top = y + 'px';
+    document.body.appendChild(ring);
+    ring.animate(
+      [{ opacity: 1, transform: 'scale(.3)' }, { opacity: 0, transform: 'scale(2.6)' }],
+      { duration: 450, easing: 'cubic-bezier(.2,.6,.3,1)' }
+    ).onfinish = () => ring.remove();
+
+    // Flash
+    const f = document.createElement('div');
+    f.className = 'flash';
+    f.style.left = x + 'px'; f.style.top = y + 'px';
+    f.style.width = f.style.height = '130px';
+    f.style.margin = '-65px 0 0 -65px';
+    document.body.appendChild(f);
+    f.animate(
+      [{ opacity: 1, transform: 'scale(.4)' }, { opacity: 0, transform: 'scale(1.5)' }],
+      { duration: 260, easing: 'ease-out' }
+    ).onfinish = () => f.remove();
+
+    // Alien goo flying everywhere
+    for (let i = 0; i < 22; i++) {
+      const size = rand(6, 16);
+      const ang = Math.random() * Math.PI * 2;
+      const dist = rand(50, 170);
+      const g = document.createElement('div');
+      g.className = 'goo';
+      g.style.width = g.style.height = size + 'px';
+      g.style.left = (x - size / 2) + 'px';
+      g.style.top = (y - size / 2) + 'px';
+      document.body.appendChild(g);
+      g.animate(
+        [
+          { transform: 'translate(0,0) scale(1)', opacity: 1 },
+          { transform: `translate(${Math.cos(ang) * dist}px, ${Math.sin(ang) * dist + 40}px) scale(.3)`, opacity: 0 }
+        ],
+        { duration: rand(500, 950), easing: 'cubic-bezier(.15,.7,.3,1)' }
+      ).onfinish = () => g.remove();
+    }
+  }
+
+  function playSplat() {
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+    const len = Math.floor(audioCtx.sampleRate * 0.3);
+    const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2);
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    const lp = audioCtx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(2400, t);
+    lp.frequency.exponentialRampToValueAtTime(300, t + 0.3);
+    const gn = audioCtx.createGain();
+    gn.gain.setValueAtTime(0.8, t);
+    gn.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+    src.connect(lp).connect(gn).connect(audioCtx.destination);
+    src.start(t);
+
+    const o = audioCtx.createOscillator();
+    const og = audioCtx.createGain();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(520, t);
+    o.frequency.exponentialRampToValueAtTime(70, t + 0.28);
+    og.gain.setValueAtTime(0.25, t);
+    og.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
+    o.connect(og).connect(audioCtx.destination);
+    o.start(t);
+    o.stop(t + 0.3);
+  }
+
+  /* ---------- Heat effects at the crosshair ---------- */
+  const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let heat = 0;          // 0 (cold) to 1 (red-hot)
+  let heatRaf = null;
+  let lastT = 0;
+
+  function paintHeat() {
+    const hue = 5 + heat * 42;                 // red to yellow
+    const light = 55 + heat * 22;              // brighter as it heats up
+    cross.style.color = `hsl(${hue}, 100%, ${light}%)`;
+    const blur = 3 + heat * 20;
+    const alpha = 0.35 + heat * 0.65;
+    cross.style.filter =
+      `drop-shadow(0 0 2px rgba(0,0,0,.8)) drop-shadow(0 0 ${blur}px hsla(${hue}, 100%, 55%, ${alpha}))`;
+  }
+
+  function coolDown(t) {
+    const dt = lastT ? (t - lastT) / 1000 : 0;
+    lastT = t;
+    heat = Math.max(0, heat - dt * 0.4);
+    paintHeat();
+    if (heat > 0) heatRaf = requestAnimationFrame(coolDown);
+    else { heatRaf = null; lastT = 0; }
+  }
+
+  function heatEffects(x, y) {
+    heat = Math.min(1, heat + 0.14);
+    paintHeat();
+    if (!heatRaf) { lastT = 0; heatRaf = requestAnimationFrame(coolDown); }
+    if (reduceMotion) return;
+
+    // Hot glow behind the crosshair
+    const g = document.createElement('div');
+    g.className = 'glow';
+    g.style.left = x + 'px'; g.style.top = y + 'px';
+    document.body.appendChild(g);
+    g.animate(
+      [{ opacity: 1, transform: 'scale(.5)' }, { opacity: 0, transform: 'scale(1.3)' }],
+      { duration: 380, easing: 'ease-out' }
+    ).onfinish = () => g.remove();
+
+    // Expanding heat ring
+    const r = document.createElement('div');
+    r.className = 'ring';
+    r.style.left = x + 'px'; r.style.top = y + 'px';
+    document.body.appendChild(r);
+    r.animate(
+      [{ opacity: 1, transform: 'scale(.5)' }, { opacity: 0, transform: 'scale(2.2)' }],
+      { duration: 420, easing: 'cubic-bezier(.2,.6,.3,1)' }
+    ).onfinish = () => r.remove();
+
+    // Glowing sparks flying out from the crosshair
+    for (let i = 0; i < 10; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const d = 35 + Math.random() * 55;
+      const s = document.createElement('div');
+      s.className = 'spark';
+      s.style.left = x + 'px'; s.style.top = y + 'px';
+      document.body.appendChild(s);
+      s.animate(
+        [
+          { transform: 'translate(0,0) scale(1)', opacity: 1 },
+          { transform: `translate(${Math.cos(a) * d}px, ${Math.sin(a) * d + 14}px) scale(.2)`, opacity: 0 }
+        ],
+        { duration: 350 + Math.random() * 250, easing: 'ease-out' }
+      ).onfinish = () => s.remove();
+    }
+
+    // Smoke rising from the hot spot
+    for (let i = 0; i < 2; i++) {
+      const sm = document.createElement('div');
+      sm.className = 'smoke';
+      sm.style.left = (x + (Math.random() * 24 - 12)) + 'px';
+      sm.style.top = y + 'px';
+      document.body.appendChild(sm);
+      sm.animate(
+        [
+          { transform: 'translate(0,0) scale(.6)', opacity: .8 },
+          { transform: `translate(${Math.random() * 30 - 15}px, -${70 + Math.random() * 40}px) scale(2.4)`, opacity: 0 }
+        ],
+        { duration: 900 + Math.random() * 400, easing: 'ease-out' }
+      ).onfinish = () => sm.remove();
+    }
+  }
+
+  function impact(x, y) {
+    heatEffects(x, y);
+    // Flash
+    const f = document.createElement('div');
+    f.className = 'flash';
+    f.style.left = x + 'px';
+    f.style.top = y + 'px';
+    document.body.appendChild(f);
+    f.animate(
+      [{ opacity: 1, transform: 'scale(.3)' }, { opacity: 0, transform: 'scale(1.2)' }],
+      { duration: 220, easing: 'ease-out' }
+    ).onfinish = () => f.remove();
+
+    // Bullet hole that lingers briefly
+    const h = document.createElement('div');
+    h.className = 'hole';
+    h.style.left = x + 'px';
+    h.style.top = y + 'px';
+    document.body.appendChild(h);
+    h.animate(
+      [{ opacity: 1 }, { opacity: 1, offset: 0.7 }, { opacity: 0 }],
+      { duration: 2500, easing: 'linear' }
+    ).onfinish = () => h.remove();
+  }
+
+  /* Tap to shoot; hold to keep firing */
+  function startHold(e) {
+    e.preventDefault();
+    shootBtn.classList.add('down');
+    fire();
+    clearInterval(holdTimer);
+    holdTimer = setInterval(fire, 220);
+  }
+  function endHold() {
+    shootBtn.classList.remove('down');
+    clearInterval(holdTimer);
+    holdTimer = null;
+  }
+  shootBtn.addEventListener('pointerdown', startHold);
+  shootBtn.addEventListener('pointerup', endHold);
+  shootBtn.addEventListener('pointercancel', endHold);
+  shootBtn.addEventListener('pointerleave', endHold);
+  shootBtn.addEventListener('contextmenu', e => e.preventDefault());
+
+  // Keyboard: Space / Enter fires (laptop testing)
+  window.addEventListener('keydown', e => {
+    if ((e.code === 'Space' || e.code === 'Enter') && !e.repeat && document.body.classList.contains('live')) {
+      e.preventDefault();
+      fire();
+    }
+  });
+
+  // Release camera when the page is hidden
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) endHold();
+  });
+})();
+</script>
+</body>
+</html>
